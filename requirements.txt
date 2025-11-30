@@ -1,0 +1,4 @@
+warp-lang>=1.0.0
+pyyaml>=6.0
+numpy>=1.24
+pyvista=0.46.4
