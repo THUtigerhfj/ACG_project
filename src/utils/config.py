@@ -38,6 +38,22 @@ class ContainerConfig:
 
 
 @dataclass
+class RigidSphereConfig:
+    center: List[float]
+    velocity: List[float]
+    radius: float
+    density: float
+
+
+@dataclass
+class RigidConfig:
+    spheres: List[RigidSphereConfig]
+    contact_offset: float
+    max_push: float
+    max_impulse: float
+
+
+@dataclass
 class ViewerConfig:
     fps: int
     particle_radius: float
@@ -48,6 +64,7 @@ class ViewerConfig:
 class ProjectConfig:
     simulation: SimulationConfig
     container: ContainerConfig
+    rigid: RigidConfig
     viewer: ViewerConfig
 
 
@@ -82,6 +99,31 @@ def _as_container(data: Dict[str, Any]) -> ContainerConfig:
     )
 
 
+def _as_rigid(data: Dict[str, Any]) -> RigidConfig:
+    raw_spheres = data.get("spheres", [])
+    spheres: List[RigidSphereConfig] = []
+    for s in raw_spheres:
+        spheres.append(
+            RigidSphereConfig(
+                center=list(s.get("center", [0.0, 0.0, 0.0])),
+                velocity=list(s.get("velocity", [0.0, 0.0, 0.0])),
+                radius=float(s.get("radius", 0.05)),
+                density=float(s.get("density", 1000.0)),
+            )
+        )
+
+    # Ensure exactly two spheres to match kernels.
+    if len(spheres) != 2:
+        raise ValueError("rigid.spheres must define exactly two spheres")
+
+    return RigidConfig(
+        spheres=spheres,
+        contact_offset=float(data.get("contact_offset", 0.008)),
+        max_push=float(data.get("max_push", -1.0)),  # -1 -> derive from smoothing length in solver
+        max_impulse=float(data.get("max_impulse", 2.0)),
+    )
+
+
 def _as_viewer(data: Dict[str, Any]) -> ViewerConfig:
     return ViewerConfig(
         fps=int(data.get("fps", 60)),
@@ -98,6 +140,7 @@ def load_config(path: str | Path) -> ProjectConfig:
 
     simulation = _as_sim(raw.get("simulation", {}))
     container = _as_container(raw.get("container", {}))
+    rigid = _as_rigid(raw.get("rigid", {}))
     viewer = _as_viewer(raw.get("viewer", {}))
 
-    return ProjectConfig(simulation=simulation, container=container, viewer=viewer)
+    return ProjectConfig(simulation=simulation, container=container, rigid=rigid, viewer=viewer)

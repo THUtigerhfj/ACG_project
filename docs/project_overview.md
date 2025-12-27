@@ -157,7 +157,7 @@ For each rendered frame run `substeps` times (2–4 typical):
 | Key | Action |
 |-----|--------|
 | A/D | Move container along X axis |
-| W/S | Move container along Y axis |
+| X/S | Move container along Y axis |
 | Q/E | Move container along Z axis |
 | R   | Reset container to origin |
 

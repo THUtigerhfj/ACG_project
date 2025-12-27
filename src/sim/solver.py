@@ -18,6 +18,15 @@ from src.sim.collision import ContainerState, container_collision_kernel
 from src.sim.grid import NeighborGrid
 from src.sim.particles import ParticleState, initialize_lattice
 from src.sim.pressure import PressureSolver
+from src.sim.rigid_spheres import (
+    NUM_SPHERES,
+    RigidSphereState,
+    build_rigid_spheres,
+    integrate_spheres_kernel,
+    sphere_sphere_collision_kernel,
+    sphere_container_collision_kernel,
+    sphere_water_coupling_kernel,
+)
 from src.utils.config import ProjectConfig
 
 
@@ -25,6 +34,7 @@ from src.utils.config import ProjectConfig
 class SimulationState:
     particles: ParticleState
     container: ContainerState
+    spheres: RigidSphereState
 
 
 class PBFSimulator:
@@ -48,6 +58,15 @@ class PBFSimulator:
         self.substeps = sim_cfg.substeps
         self.dt = sim_cfg.dt
         self.poly6_coeff, _ = (self.pressure.poly6_coeff, self.pressure.spiky_coeff)
+
+        # Coupling / contact params
+        rigid_cfg = config.rigid
+        self.contact_offset = rigid_cfg.contact_offset
+        # If max_push <= 0, derive from smoothing length (more permissive, helps contacts stick)
+        self.max_push = rigid_cfg.max_push if rigid_cfg.max_push > 0.0 else self.h
+        # Allow higher impulse by default; caller can still lower in config
+        self.max_impulse = rigid_cfg.max_impulse
+        self.particle_radius = config.viewer.particle_radius
 
     def step(self) -> None:
         for _ in range(self.substeps):
@@ -97,6 +116,78 @@ class PBFSimulator:
             device=self.device,
         )
 
+        # Keep spheres inside container (translation-only)
+        wp.launch(
+            sphere_container_collision_kernel,
+            dim=NUM_SPHERES,
+            inputs=[
+                self.state.spheres.centers,
+                self.state.spheres.velocities,
+                self.state.container.translation_wp(),
+                self.state.container.half_extents_wp(),
+                self.state.spheres.radii,
+                self.contact_offset,
+                self.max_push,
+            ],
+            device=self.device,
+        )
+
+        # Sphere-sphere mutual collision (only one pair when NUM_SPHERES == 2)
+        wp.launch(
+            sphere_sphere_collision_kernel,
+            dim=1,
+            inputs=[
+                self.state.spheres.centers,
+                self.state.spheres.velocities,
+                self.state.spheres.radii,
+                self.state.spheres.inv_masses,
+                self.contact_offset,
+                self.max_push,
+                self.max_impulse,
+            ],
+            device=self.device,
+        )
+
+        # Two-way coupling: particles vs spheres
+        wp.launch(
+            sphere_water_coupling_kernel,
+            dim=particles.count,
+            inputs=[
+                particles.positions,
+                particles.velocities,
+                self.state.spheres.centers,
+                self.state.spheres.velocities,
+                self.state.spheres.radii,
+                self.state.spheres.inv_masses,
+                self.state.spheres.impulse_x,
+                self.state.spheres.impulse_y,
+                self.state.spheres.impulse_z,
+                self.mass,
+                self.particle_radius,
+                self.contact_offset,
+                self.max_push,
+                self.max_impulse,
+            ],
+            device=self.device,
+        )
+
+        # Integrate spheres with accumulated impulses and gravity
+        wp.launch(
+            integrate_spheres_kernel,
+            dim=NUM_SPHERES,
+            inputs=[
+                self.state.spheres.centers,
+                self.state.spheres.velocities,
+                self.state.spheres.inv_masses,
+                self.state.spheres.impulse_x,
+                self.state.spheres.impulse_y,
+                self.state.spheres.impulse_z,
+                self.dt,
+                self.gravity,
+            ],
+            device=self.device,
+        )
+
         wp.launch(
             container_collision_kernel,
             dim=particles.count,
@@ -127,4 +218,14 @@ def build_simulation_state(config: ProjectConfig, device: str = "cuda") -> Simul
         wall_thickness=container_cfg.wall_thickness,
         device=device,
     )
-    return SimulationState(particles=particles, container=container)
+
+    rigid_cfg = config.rigid
+    spheres = build_rigid_spheres(
+        centers=[s.center for s in rigid_cfg.spheres],
+        velocities=[s.velocity for s in rigid_cfg.spheres],
+        radii=[s.radius for s in rigid_cfg.spheres],
+        densities=[s.density for s in rigid_cfg.spheres],
+        device=device,
+    )
+
+    return SimulationState(particles=particles, container=container, spheres=spheres)

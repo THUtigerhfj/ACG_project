@@ -47,7 +47,7 @@ GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) im
 |-----|--------|
 | **A** | Move container left (-X) |
 | **D** | Move container right (+X) |
-| **W** | Move container up (+Y) |
+| **X** | Move container up (+Y) |
 | **S** | Move container down (-Y) |
 | **Q** | Move container backward (-Z) |
 | **E** | Move container forward (+Z) |

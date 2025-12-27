@@ -31,7 +31,7 @@ from src.kernels.fluids import kernel_poly6
 from src.sim.solver import PBFSimulator, build_simulation_state
 from src.utils.config import ProjectConfig, load_config
 
-MOVE_STEP = 0.07   # Container displacement target per key press (world units)
+MOVE_STEP = 0.06   # Container displacement target per key press (world units)
 MOVE_DURATION = 0.1  # Simulated seconds a key press keeps the container moving
 MOVE_SPEED = MOVE_STEP / MOVE_DURATION  # Derived constant for smooth motion
 
@@ -192,6 +192,8 @@ class ViewerRuntime:
     container_inner_edges_mesh: Optional[PvPolyData] = field(default=None, init=False)
     water_mesh: Optional[PvPolyData] = field(default=None, init=False)
     water_actor: Any = field(default=None, init=False)
+    sphere_meshes: list[PvPolyData] = field(default_factory=list, init=False)
+    sphere_actors: list[Any] = field(default_factory=list, init=False)
     surface_mesher: Optional[SurfaceMesher] = field(default=None, init=False)
 
     # State
@@ -251,6 +253,37 @@ class ViewerRuntime:
             self.container_edges_mesh.copy_from(new_outer_edges)
         if self.container_inner_edges_mesh is not None:
             self.container_inner_edges_mesh.copy_from(new_inner_edges)
+
+    def _build_sphere_meshes(self) -> None:
+        spheres = self.simulator.state.spheres
+        centers = spheres.centers.numpy()
+        radii = spheres.radii.numpy()
+
+        self.sphere_meshes = []
+        self.sphere_actors = []
+        for i in range(centers.shape[0]):
+            mesh = pv.Sphere(center=centers[i], radius=float(radii[i]), theta_resolution=32, phi_resolution=32)
+            actor = self.plotter.add_mesh(mesh, color=(0.9, 0.35, 0.2) if i == 0 else (0.2, 0.35, 0.9), opacity=0.8)
+            self.sphere_meshes.append(mesh)
+            self.sphere_actors.append(actor)
+
+    def _update_sphere_meshes(self) -> None:
+        if not self.sphere_meshes:
+            return
+        spheres = self.simulator.state.spheres
+        centers = spheres.centers.numpy()
+        radii = spheres.radii.numpy()
+        for i, mesh in enumerate(self.sphere_meshes):
+            updated = pv.Sphere(center=centers[i], radius=float(radii[i]), theta_resolution=32, phi_resolution=32)
+            try:
+                mesh.copy_from(updated)
+            except Exception:
+                # If copy fails, replace actor to stay robust.
+                if self.plotter is not None and i < len(self.sphere_actors):
+                    self.plotter.remove_actor(self.sphere_actors[i])
+                    actor = self.plotter.add_mesh(updated, color=(0.9, 0.35, 0.2) if i == 0 else (0.2, 0.35, 0.9), opacity=0.8)
+                    self.sphere_actors[i] = actor
+                    self.sphere_meshes[i] = updated
 
     def _setup_lights(self) -> None:
         key = pv.Light(position=(3, 3, 4), focal_point=(0, 0, 0), intensity=0.9)
@@ -353,6 +386,12 @@ class ViewerRuntime:
             )
 
         self.plotter = pv.Plotter(window_size=(1280, 720), lighting="none")
+        # Remove PyVista default key bindings (e.g., 'w' toggles wireframe) to avoid
+        # conflicts with our movement controls.
+        try:
+            self.plotter.clear_events()
+        except Exception:
+            pass
 
         bg_color = self.config.viewer.background_color
         if isinstance(bg_color, (list, tuple)):
@@ -393,6 +432,9 @@ class ViewerRuntime:
             name="container_inner_edges",
         )
 
+        # Build spheres
+        self._build_sphere_meshes()
+
         # Initialize mesher and first surface
         self.surface_mesher = SurfaceMesher(self.simulator, self.device)
         self._update_water_representation()
@@ -404,9 +446,9 @@ class ViewerRuntime:
         self.plotter.camera_position =  [(0, 4, 0), (0, 0, 0), (0, 0, 1)]
         self.plotter.camera.zoom(1.2)
 
-        # Add instructions text
+        # Add instructions text (note: 'X' is used instead of PyVista's default 'w')
         self.plotter.add_text(
-            "A/D: Move X | W/S: Move Y | Q/E: Move Z | R: Reset\n"
+            "A/D: Move X | X/S: Move Y | Q/E: Move Z | R: Reset\n"
             "Mouse: Rotate/Pan/Zoom",
             position="lower_left",
             font_size=10,
@@ -432,7 +474,8 @@ class ViewerRuntime:
         self.plotter.add_key_event("a", lambda: schedule_move((-1.0, 0.0, 0.0)))
         self.plotter.add_key_event("d", lambda: schedule_move((1.0, 0.0, 0.0)))
         self.plotter.add_key_event("s", lambda: schedule_move((0.0, -1.0, 0.0)))
-        self.plotter.add_key_event("w", lambda: schedule_move((0.0, 1.0, 0.0)))
+        # Use 'x' for +Y to avoid PyVista default wireframe toggle on 'w' and keep close to 's'
+        self.plotter.add_key_event("x", lambda: schedule_move((0.0, 1.0, 0.0)))
         self.plotter.add_key_event("q", lambda: schedule_move((0.0, 0.0, -1.0)))
         self.plotter.add_key_event("e", lambda: schedule_move((0.0, 0.0, 1.0)))
         self.plotter.add_key_event("r", reset_container)
@@ -444,7 +487,7 @@ class ViewerRuntime:
         print("Controls: A/D (X), W/S (Y), Q/E (Z), R (reset)")
         
         target_dt = 1.0 / 60.0  # Target 60 FPS for rendering
-        sim_step_dt = float(self.simulator.dt * self.simulator.substeps)
+        sim_step_dt = float(self.simulator.dt * self.simulator.substeps) # Time for one simulation.step()
         self._sim_time = 0.0
         
         try:
@@ -461,6 +504,9 @@ class ViewerRuntime:
 
                 # Update water representation
                 self._update_water_representation()
+
+                # Update spheres
+                self._update_sphere_meshes()
 
                 # Update container mesh
                 self._update_container_meshes()
