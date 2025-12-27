@@ -8,6 +8,7 @@ GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) im
 - **Interactive container control** using keyboard inputs
 - **XSPH viscosity** for smooth, realistic fluid behavior
 - **SDF-based collision** handling for container boundaries
+- **Two-way coupled rigid spheres**: one lighter and one heavier than water, interacting with the fluid via PBD-style contact impulses
 - **PyVista visualization** with ~60 FPS rendering
 
 ## Getting Started
@@ -33,11 +34,11 @@ GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) im
    pip install -r requirements.txt
    ```
 
-3. Launch the interactive viewer:
+3. Launch the smoothed surface viewer with rigid spheres enabled:
 
-   ```bash
-   python -m src.app.realtime_viewer
-   ```
+  ```bash
+  python -m src.app.smoothed_viewer
+  ```
 
 ## Controls
 
@@ -75,22 +76,6 @@ Options:
 ## Configuration
 
 Edit `configs/default.yaml` to adjust simulation parameters:
-
-```yaml
-simulation:
-  dt: 0.005              # Time step
-  substeps: 3            # Substeps per frame
-  pressure_iterations: 6 # PBF solver iterations
-  xsph_coefficient: 0.1  # Viscosity damping
-  smoothing_length: 0.04 # SPH kernel radius
-  rest_density: 1000.0   # Target fluid density
-  particle_mass: 0.008   # Mass per particle
-  gravity: [0, -9.81, 0] # Gravity vector
-
-container:
-  half_extents: [0.5, 0.5, 0.5]  # Container size
-  translation: [0, 0, 0]          # Initial position
-```
 
 ## Useful Scripts
 

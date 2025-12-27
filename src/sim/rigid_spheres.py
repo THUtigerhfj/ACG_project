@@ -81,7 +81,7 @@ def safe_normal(v: wp.vec3, eps: float = 1.0e-8) -> wp.vec3:
 
 
 @wp.func
-def sdf_box_local(p: wp.vec3, he: wp.vec3) -> float:
+def sdf_box_local(p: wp.vec3, he: wp.vec3) -> float: # he, half extents; inside negative
     """Signed distance to an axis-aligned box centered at origin with half extents he."""
     q = wp.vec3(wp.abs(p[0]) - he[0], wp.abs(p[1]) - he[1], wp.abs(p[2]) - he[2])
     q_max = wp.vec3(wp.max(q[0], 0.0), wp.max(q[1], 0.0), wp.max(q[2], 0.0))
@@ -125,7 +125,7 @@ def sphere_sphere_collision_kernel(
     target = r0 + r1 + contact_offset
     penetration = target - dist
 
-    if penetration > 0.0:
+    if penetration > 0.0: # already penetrating
         n = safe_normal(diff)
 
         wsum = w0 + w1
@@ -134,14 +134,14 @@ def sphere_sphere_collision_kernel(
             if max_push > 0.0 and push > max_push:
                 push = max_push
 
-            # Split push-out by inverse masses
+            # Split push-out by inverse masses along normal
             if w0 > 0.0:
                 c0 = c0 - n * (push * (w0 / wsum))
             if w1 > 0.0:
                 c1 = c1 + n * (push * (w1 / wsum))
 
             # Inelastic normal response
-            v_rel_n = wp.dot(v1 - v0, n)
+            v_rel_n = wp.dot(v1 - v0, n) # relative normal velocity
             if v_rel_n < 0.0:
                 J = -v_rel_n / wsum  # scalar impulse magnitude
                 Jvec = n * J
@@ -310,7 +310,7 @@ def sphere_container_collision_kernel(
     he = wp.vec3(wp.max(he[0], 0.0), wp.max(he[1], 0.0), wp.max(he[2], 0.0))
 
     # Signed distance to box (same convention: negative inside, positive outside).
-    dist = sdf_box_local(c, he)
+    dist = sdf_box_local(c, he) # inside is negative
 
     if dist > 0.0:
         # Estimate normal via finite differences (cheap at 2 spheres).
