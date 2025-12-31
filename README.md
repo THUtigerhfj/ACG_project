@@ -13,32 +13,11 @@ GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) im
 
 ## Getting Started
 
-### Prerequisites
+The requirements can be found in `requirements.txt`. Install them using pip:
 
-- Python 3.10+
-- NVIDIA GPU with CUDA support
-- CUDA Toolkit 12.x
-
-### Installation
-
-1. Create/activate a Python 3.10+ environment:
-
-   ```bash
-   conda create -n sph python=3.10
-   conda activate sph
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Launch the smoothed surface viewer with rigid spheres enabled:
-
-  ```bash
-  python -m src.app.smoothed_viewer
-  ```
+```bash
+pip install -r requirements.txt
+```
 
 ## Controls
 
@@ -65,23 +44,12 @@ GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) im
 ## Command Line Options
 
 ```bash
-python -m src.app.realtime_viewer [OPTIONS]
-
-Options:
-  --config PATH    Path to YAML config file (default: configs/default.yaml)
-  --device DEVICE  Target device: cuda or cpu (default: cuda)
-  --frames N       Optional frame limit for testing
+python -m src.app.smoothed_viewer
 ```
 
 ## Configuration
 
 Edit `configs/default.yaml` to adjust simulation parameters:
-
-## Useful Scripts
-
-- `python scripts/generate_initial_state.py` - Generate particle initial states
-- `python debug_test.py` - Step-by-step simulation debugging
-- `pytest` - Run unit tests
 
 ## Repository Layout
 
