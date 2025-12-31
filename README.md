@@ -23,23 +23,23 @@ pip install -r requirements.txt
 
 ### Container Movement
 
-| Key | Action |
-|-----|--------|
-| **A** | Move container left (-X) |
-| **D** | Move container right (+X) |
-| **X** | Move container up (+Y) |
-| **S** | Move container down (-Y) |
+| Key         | Action                       |
+| ----------- | ---------------------------- |
+| **A** | Move container left (-X)     |
+| **D** | Move container right (+X)    |
+| **X** | Move container up (+Y)       |
+| **S** | Move container down (-Y)     |
 | **Q** | Move container backward (-Z) |
-| **E** | Move container forward (+Z) |
-| **R** | Reset container to origin |
+| **E** | Move container forward (+Z)  |
+| **R** | Reset container to origin    |
 
 ### Camera Controls (Mouse)
 
-| Input | Action |
-|-------|--------|
-| **Left-drag** | Rotate camera |
-| **Right-drag** | Pan camera |
-| **Scroll** | Zoom in/out |
+| Input                | Action        |
+| -------------------- | ------------- |
+| **Left-drag**  | Rotate camera |
+| **Right-drag** | Pan camera    |
+| **Scroll**     | Zoom in/out   |
 
 ## Command Line Options
 
@@ -49,7 +49,7 @@ python -m src.app.smoothed_viewer
 
 ## Configuration
 
-Edit `configs/default.yaml` to adjust simulation parameters:
+Edit `configs/default.yaml` to adjust simulation parameters. We have provided customizable presets for container size, sphere radius, sphere density, and sphere color.
 
 ## Repository Layout
 

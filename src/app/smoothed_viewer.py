@@ -254,6 +254,15 @@ class ViewerRuntime:
         if self.container_inner_edges_mesh is not None:
             self.container_inner_edges_mesh.copy_from(new_inner_edges)
 
+    def _sphere_color(self, index: int) -> Tuple[float, float, float]:
+        try:
+            cfg_color = self.config.rigid.spheres[index].color
+            if cfg_color:
+                return tuple(cfg_color)
+        except Exception:
+            pass
+        return (0.9, 0.35, 0.2) if index == 0 else (0.2, 0.9, 0.35)
+
     def _build_sphere_meshes(self) -> None:
         spheres = self.simulator.state.spheres
         centers = spheres.centers.numpy()
@@ -262,8 +271,9 @@ class ViewerRuntime:
         self.sphere_meshes = []
         self.sphere_actors = []
         for i in range(centers.shape[0]):
+            color = self._sphere_color(i)
             mesh = pv.Sphere(center=centers[i], radius=float(radii[i]), theta_resolution=32, phi_resolution=32)
-            actor = self.plotter.add_mesh(mesh, color=(0.9, 0.35, 0.2) if i == 0 else (0.2, 0.9, 0.35), opacity=1.0)
+            actor = self.plotter.add_mesh(mesh, color=color, opacity=1.0)
             self.sphere_meshes.append(mesh)
             self.sphere_actors.append(actor)
 
@@ -274,6 +284,7 @@ class ViewerRuntime:
         centers = spheres.centers.numpy()
         radii = spheres.radii.numpy()
         for i, mesh in enumerate(self.sphere_meshes):
+            color = self._sphere_color(i)
             updated = pv.Sphere(center=centers[i], radius=float(radii[i]), theta_resolution=32, phi_resolution=32)
             try:
                 mesh.copy_from(updated)
@@ -281,7 +292,7 @@ class ViewerRuntime:
                 # If copy fails, replace actor to stay robust.
                 if self.plotter is not None and i < len(self.sphere_actors):
                     self.plotter.remove_actor(self.sphere_actors[i])
-                    actor = self.plotter.add_mesh(updated, color=(0.9, 0.35, 0.2) if i == 0 else (0.2, 0.35, 0.9), opacity=0.8)
+                    actor = self.plotter.add_mesh(updated, color=color, opacity=0.8)
                     self.sphere_actors[i] = actor
                     self.sphere_meshes[i] = updated
 

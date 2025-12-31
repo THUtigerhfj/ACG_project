@@ -43,6 +43,7 @@ class RigidSphereConfig:
     velocity: List[float]
     radius: float
     density: float
+    color: List[float]
 
 
 @dataclass
@@ -101,14 +102,22 @@ def _as_container(data: Dict[str, Any]) -> ContainerConfig:
 
 def _as_rigid(data: Dict[str, Any]) -> RigidConfig:
     raw_spheres = data.get("spheres", [])
+    if not raw_spheres:
+        raw_spheres = [
+            {"center": [0.0, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0]},
+            {"center": [0.0, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0]},
+        ]
     spheres: List[RigidSphereConfig] = []
-    for s in raw_spheres:
+    default_colors = ([0.9, 0.35, 0.2], [0.2, 0.9, 0.35])
+    for idx, s in enumerate(raw_spheres):
+        fallback_color = default_colors[idx % len(default_colors)]
         spheres.append(
             RigidSphereConfig(
                 center=list(s.get("center", [0.0, 0.0, 0.0])),
                 velocity=list(s.get("velocity", [0.0, 0.0, 0.0])),
                 radius=float(s.get("radius", 0.05)),
                 density=float(s.get("density", 1000.0)),
+                color=list(s.get("color", fallback_color)),
             )
         )
 

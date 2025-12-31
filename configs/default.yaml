@@ -1,3 +1,15 @@
+# Customized configurations
+customized:
+  container_half_extents: &container_half_extents [0.5, 0.4, 0.4]
+  sphere_radius_light: &sphere_radius_light 0.15
+  sphere_radius_heavy: &sphere_radius_heavy 0.1
+  sphere_density_light: &sphere_density_light 100.0
+  sphere_density_heavy: &sphere_density_heavy 2000.0
+  sphere_color_light: &sphere_color_light [0.9, 0.35, 0.2] # RGB channels between 0 and 1
+  sphere_color_heavy: &sphere_color_heavy [0.9, 0.9, 0.35]
+
+
+# Default configurations
 simulation:
   dt: 0.005
   substeps: 3
@@ -13,7 +25,7 @@ simulation:
     max_corner: [0.3, 0.3, 0.0]
     spacing: 0.02
 container:
-  half_extents: [0.5, 0.4, 0.4]
+  half_extents: *container_half_extents
   translation: [0.0, 0.0, 0.0]
   wall_thickness: 0.05
 viewer:
@@ -24,12 +36,14 @@ rigid:
   spheres:
     - center: [0.2, 0.0, 0.2]
       velocity: [0.0, 0.0, 0.0]
-      radius: 0.15
-      density: 100.0   # lighter than water
+      radius: *sphere_radius_light
+      density: *sphere_density_light
+      color: *sphere_color_light
     - center: [-0.2, 0.0, 0.2]
       velocity: [0.0, 0.0, 0.0]
-      radius: 0.15
-      density: 2000.0  # heavier than water
+      radius: *sphere_radius_heavy
+      density: *sphere_density_heavy
+      color: *sphere_color_heavy
   contact_offset: 0.008
   max_push: -1.0   # -1 means derive from smoothing_length in solver
   max_impulse: 2.0
