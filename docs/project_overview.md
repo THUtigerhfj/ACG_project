@@ -36,37 +36,37 @@
 
 ```text
 ACG_project/
+├─ configs/                     # Runtime presets (particle count, solver params)
 ├─ docs/                        # Design notes, derivations, troubleshooting
 │  └─ project_overview.md
-├─ configs/                     # Runtime presets (particle count, solver params)
 ├─ src/
-│  ├─ app/                      # Entry points (viewer, CLI) and mouse input plumbing
-│  │  └─ realtime_viewer.py     # Wraps NVIDIA Warp Viewer (OpenGL/ImGui) for live control
+│  ├─ app/                      # Entry points (viewers)
+│  │  ├─ realtime_viewer.py     # Raw particle viewer
+│  │  └─ smoothed_viewer.py     # A more realistic viewer with surface reconstruction
+│  ├─ kernels/
+│  │  └─ fluids.py              # Warp kernels for PBF/SPH pipeline (density, lambda, delta, xsph, etc.)
 │  ├─ sim/
-│  │  ├─ particles.py          # Particle buffers, initialization utilities
-│  │  ├─ grid.py               # Hash-grid build & neighborhood queries
-│  │  ├─ solver.py             # Frame loop orchestration & substep management
-│  │  ├─ pressure.py           # PBF/DFSPH constraint evaluation kernels
-│  │  └─ collision.py          # Container SDF sampling & response
-│  ├─ kernels/                 # Warp kernels grouped by stage (density, lambda, etc.)
-│  ├─ utils/                   # Math helpers, profiling, parameter validation
-│  └─ viz/                     # Lightweight scatter/isosurface previews (optional)
-├─ assets/
-│  ├─ initial_states/          # Particle lattices or cached npz setups
-│  └─ sdf/                     # Binary SDF grids for alternate container shapes
-├─ scripts/                    # Dev utilities (profilers, cache dumpers)
-├─ tests/                      # Unit tests for kernels and integrators
-└─ README.md                   # Quick start guide
+│  │  ├─ particles.py           # Particle buffers, initialization
+│  │  ├─ grid.py                # Hash-grid logic
+│  │  ├─ solver.py              # Frame loop orchestration
+│  │  ├─ pressure.py            # Host-side wrappers for PBF constraint solve
+│  │  ├─ collision.py           # Container procedural SDF & collision handling
+│  │  └─ rigid_spheres.py       # Rigid sphere dynamics & coupling
+│  └─ utils/
+│     └─ config.py              # Configuration loading
+├─ .gitignore
+├─ README.md
+└─ requirements.txt
 ```
 
 ### Key modules and responsibilities
 
-- `sim/particles.py`: defines the struct-of-arrays Warp buffers (`positions`, `velocities`, `densities`, `lambdas`, etc.) and handles device/host synchronization when needed.
-- `sim/grid.py`: builds the uniform hash grid (compute keys, radix sort, prefix offsets) and exposes neighbor iteration helpers usable inside Warp kernels.
-- `sim/pressure.py`: implements Position-Based Fluids style lambda solve plus position deltas; holds iteration counts and convergence checks.
-- `sim/collision.py`: stores container SDF data/transform, samples signed distance, returns push-out vectors, and applies simple velocity damping along the collision normal.
-- `sim/rigid_spheres.py`: manages two translation-only rigid spheres, computes water–sphere impulses and sphere–container / sphere–sphere collision corrections.
-- `sim/solver.py`: high-level simulation stepper that runs gravity prediction, grid build, PBF iterations, velocity update, sphere coupling, and container collision in the required order.
+- `sim/particles.py`: defines the struct-of-arrays Warp buffers (`positions`, `velocities`, `velocities_temp`, `prev_positions`, `densities`, `lambdas`, etc.) and handles device/host synchronization.
+- `sim/grid.py`: builds the uniform hash grid and exposes neighbor iteration helpers.
+- `sim/pressure.py`: orchestrates the iterative PBF solve by invoking kernels from `kernels/fluids.py`.
+- `sim/collision.py`: implements procedural box SDF (`signed_distance_box`) and applied container collisions (`container_collision_kernel`).
+- `sim/rigid_spheres.py`: manages two translation-only rigid spheres, computes water–sphere impulses, and handles sphere–container / sphere–sphere collisions.
+- `sim/solver.py`: high-level simulation stepper that runs prediction, hash grid build, PBF iterations, velocity update (with XSPH), sphere coupling, and collisions in order.
 - `app/realtime_viewer.py`: particle-only viewer for quick inspection and debugging.
 - `app/smoothed_viewer.py`: smoothed surface viewer that also renders and couples the two rigid spheres.
 
@@ -77,20 +77,20 @@ ACG_project/
 | Fluid particles     | Drive dynamics; each particle stores `x`, `v`, `density`, `lambda`, `delta_x`          |
 | Rigid spheres       | Two translation-only balls storing center, velocity, radius, inverse mass; moved by contact and gravity |
 | Neighbor grid       | Uniform hash grid rebuilt every substep for O(N) neighbor queries                                |
-| Pressure solver     | PBF/DFSPH constraint projection enforcing incompressibility                                      |
+| Pressure solver     | PBF constraint projection enforcing incompressibility                                      |
 | Integration         | Semi-implicit Euler for prediction plus velocity update from corrected positions                 |
 | Fluid–rigid contact | PBD-style contact constraints for water–sphere, sphere–container, and sphere–sphere interactions |
-| Container collision | SDF evaluated in container space, apply push-out and normal damping                              |
-| Runtime loop        | Python orchestrator backed by Warp Viewer for camera/input, keeping kernels on GPU               |
+| Container collision | Procedural SDF evaluated in container-local space; push-out and velocity damping                 |
+| Runtime loop        | Python orchestrator backed by PyVista (VTK) for visualization/input, keeping kernels on GPU      |
 
 ## State layout (Warp arrays)
 
-- `positions`, `velocities`, `positions_prev`: `wp.array(dtype=wp.vec3)`
+- `positions`, `velocities`, `velocities_temp`, `prev_positions`: `wp.array(dtype=wp.vec3)`
 - `densities`, `lambdas`: `wp.array(dtype=float)`
 - `delta_pos`: `wp.array(dtype=wp.vec3)` used for accumulated correction per iteration
 - Rigid spheres: `centers`, `velocities`: `wp.array(dtype=wp.vec3)`; `radii`, `inv_masses`, and impulse accumulators: `wp.array(dtype=float)`
-- Grid buffers: `cell_keys`, `sorted_indices`, `cell_offsets`, `neighbors` (optional compact list) stored as `wp.array(int)`
-- Container data: `sdf_values` (3D texture), `sdf_resolution`, `container_transform` (4x4), and `inv_transform`
+- Grid buffers: `cell_keys`, `sorted_indices`, `cell_offsets`: `wp.array(int)`
+- Container data: `half_extents` (wp.vec3) and `translation` (wp.vec3) for procedural SDF
 
 ## Per-frame pipeline
 
@@ -111,72 +111,55 @@ For each rendered frame run `substeps` times (2–4 typical):
 9. **Container–fluid collision**: sample container SDF for particles; if `d < 0`, push particles out along gradient and zero outward normal velocity.
 10. **Swap buffers**: set `x_prev = x_corrected` for the next substep.
 
-## Pressure solver details (PBF/DFSPH style)
+## Pressure solver details (PBF style)
 
-- Constraint: `C_i = rho_i / rho0 - 1`. We only solve when `C_i > 0` to avoid over-expanding sparse regions.
+- Constraint: `C_i = rho_i / rho0 - 1`. 
 - Lambda computation:
-
   ```text
   lambda_i = -C_i / (Σ_j |∇W_ij|^2 + ε)
   ```
-
-  where `∇W_ij` is evaluated with the spiky kernel and `ε ≈ 1e-6` for stability.
-- Position delta kernel:
-
+- Position delta:
   ```text
   Δx_i = Σ_j (lambda_i + lambda_j) * ∇W_ij
-  Δx_i += relaxation * n_i    # optional for boundary thickness
   ```
-- Iterate 4–8 times per substep or until `max|C_i| < tol`. Warp makes multiple launches inexpensive when buffers stay on GPU, keeping the fluid nearly incompressible in real time.
+- Iterate a fixed number of times (e.g. 6) per substep.
 
 ## Viscosity via XSPH blending
 
-- After the PBF position corrections, apply an XSPH velocity update to introduce an intuitive “thickness” without solving an additional viscosity PDE.
 - Formula per particle:
-
   ```text
   v_i = v_i + c_xsph * Σ_j (m_j / ρ_j) * (v_j - v_i) * W_ij
   ```
+- Implemented via double buffering (`copy_vec3_array_kernel` then `xsph_kernel`) to avoid race conditions.
 
-  where `c_xsph` is a dimensionless damping knob (e.g., 0.05–0.2). This term damps relative motion, preventing perpetual oscillations when the container stops moving.
-- Implementation detail: reuse the neighbor list built for the PBF solve so the extra kernel is O(N). Warp makes it easy to launch a dedicated `xsph_kernel` right after `update_velocity_kernel`.
+## Container handling via Procedural SDF
 
-## Container handling via SDF
-
-- Represent the axis-aligned box as a voxel SDF in `assets/sdf/box.npz`. Because the container only translates (no rotation/scale), the SDF stays aligned with world axes; we simply offset sample positions by the translation vector instead of recomputing gradients.
-- During runtime, transform particle positions into container-local space with the inverse mouse-driven matrix, sample trilinearly, and compute gradients using finite differences.
-- Collision kernel logic:
-
-  ```python
-  d = sample_sdf(x_local)
-  if d < 0:
-      n = normalize(grad_sdf(x_local))
-      x += (-d + padding) * n        # push outside wall
-      v -= wp.dot(v, n) * n          # kill normal component; keep tangential slide
-  ```
-- Because the container is purely kinematic, no forces are sent back; only particle state changes.
+- The container is an axis-aligned box with purely kinematic translation (no rotation).
+- A Warp function `signed_distance_box(p, half_extents)` computes the SDF. 
+- In our convention, `dist > 0` means **outside** the fluid domain (i.e. outside the inner box volume), so we push particles back in.
+- Gradients are estimated via finite differences to determine the push direction.
 
 ## Warp kernel breakdown
 
-- `build_grid_kernel`: compute cell keys from predicted positions.
-- `density_kernel`: iterate over neighboring cells, sum poly6 contributions.
-- `lambda_kernel`: reuse neighbors, compute constraint denominator and lambda value.
-- `delta_kernel`: apply `(λ_i + λ_j)` and accumulate corrections atomically or via shared memory if necessary.
-- `apply_delta_kernel`: add corrections to predicted positions and zero `delta_pos` for next iteration.
-- `update_velocity_kernel`: compute `(x - x_prev)/dt`.
-- `xsph_kernel`: perform velocity blending to emulate viscosity and damp residual jitter.
-- `container_collision_kernel`: sample SDF, push out, damp particle velocity.
-- `sphere_container_collision_kernel`: push rigid sphere centers back inside the container and remove outward normal velocity.
-- `sphere_sphere_collision_kernel`: resolve overlap and normal relative motion between the two rigid spheres.
-- `sphere_water_coupling_kernel`: handle fluid–sphere contact by projecting particles out of the sphere and accumulating equal-and-opposite impulses onto the sphere.
-- `integrate_spheres_kernel`: apply accumulated impulses and gravity to rigid spheres and advance their centers.
+- **Fluid Kernels** (`src/kernels/fluids.py`):
+  - `predict_positions_kernel`
+  - `density_kernel`
+  - `lambda_kernel`
+  - `delta_kernel`
+  - `apply_delta_kernel`
+  - `update_velocity_kernel`
+  - `copy_vec3_array_kernel`
+  - `xsph_kernel`
+- **Collision/Coupling Kernels** (`src/sim/collision.py`, `src/sim/rigid_spheres.py`):
+  - `container_collision_kernel`
+  - `sphere_sphere_collision_kernel`
+  - `sphere_water_coupling_kernel`
+  - `integrate_spheres_kernel`
+  - `sphere_container_collision_kernel`
 
 ## Visualization & Interaction (PyVista)
 
-- The project uses **PyVista** (VTK-based) for real-time visualization with an interactive update loop.
-- Particles are rendered as blue spheres using point cloud rendering with `render_points_as_spheres=True`.
-- Container is displayed as a wireframe box that updates position in real-time.
-- The main loop uses `plotter.show(interactive_update=True)` with explicit `plotter.update()` calls for smooth animation.
+The project uses **PyVista** (VTK-based) for real-time visualization with an interactive update loop.
 
 ### Keyboard Controls
 
@@ -199,28 +182,32 @@ For each rendered frame run `substeps` times (2–4 typical):
 
 ```python
 def simulate_frame(sim_state, input_state):
-  # Update kinematic container from input
-  sim_state.container.set_transform(input_state.mouse_matrix)
+    # Update kinematic container from input
+    sim_state.container.set_translation(input_state.translation)
+    
     for _ in range(sim_state.substeps):
-    # Fluid prediction + incompressibility
-    predict_positions(sim_state)          # gravity + x_pred
-    build_grid(sim_state)                 # neighbor structure
-    for _ in range(sim_state.pressure_iters):
-      compute_density(sim_state)        # rho_i from neighbors
-      compute_lambdas(sim_state)        # density constraint C_i
-      accumulate_position_deltas(sim_state)
-      apply_position_deltas(sim_state)  # update x
-    update_velocities(sim_state)          # v = (x - x_prev)/dt
-    apply_xsph(sim_state)                 # viscosity-like damping
+        # Fluid prediction
+        predict_positions(sim_state)
+        build_grid(sim_state)
+        
+        # PBF Iterations
+        for _ in range(sim_state.iterations):
+            compute_density(sim_state)
+            compute_lambdas(sim_state)
+            compute_deltas(sim_state)
+            apply_deltas(sim_state)
+            
+        update_velocities(sim_state)
+        apply_xsph(sim_state)
 
-    # Rigid spheres: container / mutual / fluid coupling
-    collide_spheres_with_container(sim_state)
-    collide_spheres_with_each_other(sim_state)
-    couple_fluid_and_spheres(sim_state)   # project particles, accumulate impulses
-    integrate_spheres(sim_state)          # apply impulses + gravity
-
-    # Fluid vs container
-    resolve_container_collisions(sim_state)
+        # Rigid & Coupling
+        collide_spheres_container(sim_state)
+        collide_spheres_mutual(sim_state)
+        couple_fluid_spheres(sim_state) # Fluid->Sphere impulses
+        integrate_spheres(sim_state)    # Update spheres
+        
+        # Fluid-Container
+        collide_fluid_container(sim_state)
 ```
 
 ## Implementation Completed
@@ -228,8 +215,9 @@ def simulate_frame(sim_state, input_state):
 1. ✅ Scaffolded `src/` tree with clean module imports
 2. ✅ Implemented particle buffer management (`sim/particles.py`) with GPU arrays
 3. ✅ Built hash-grid via Warp's `wp.HashGrid` (`sim/grid.py`)
-4. ✅ Coded PBF pressure kernels with density clamping for boundary stability
-5. ✅ Implemented XSPH with normalized weighted averaging (avoids density division issues)
-6. ✅ Added SDF box collision with proper inside/outside detection
-7. ✅ Connected PyVista viewer with keyboard controls and real-time updates
+4. ✅ Coded PBF pressure kernels (`kernels/fluids.py`)
+5. ✅ Implemented XSPH with normalized weighted averaging
+6. ✅ Added procedural SDF box collision (`sim/collision.py`)
+7. ✅ Implemented rigid sphere dynamics and two-way coupling (`sim/rigid_spheres.py`)
+8. ✅ Connected PyVista viewer (`app/realtime_viewer.py`, `app/smoothed_viewer.py`) with keyboard controls and real-time updates
 

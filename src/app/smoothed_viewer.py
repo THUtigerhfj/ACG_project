@@ -205,6 +205,8 @@ class ViewerRuntime:
     )
     _velocity_until: float = field(default=0.0, init=False, repr=False)
     _sim_time: float = field(default=0.0, init=False, repr=False)
+    _mean_frame_ms: float = field(default=0.0, init=False, repr=False)
+    _mean_samples: int = field(default=0, init=False, repr=False)
 
     def _build_particle_cloud(self) -> PvPolyData:
         positions = self.simulator.state.particles.positions.numpy().copy()
@@ -525,11 +527,6 @@ class ViewerRuntime:
                 # Render
                 self.plotter.update()
 
-                # Debug output
-                if self._frame_count % 60 == 0:
-                    mode = "Particles" if self._simple_mode else "Surface"
-                    print(f"Frame {self._frame_count}: mode={mode}")
-
                 # Frame limiting
                 if self.max_frames and self._frame_count >= self.max_frames:
                     break
@@ -539,6 +536,20 @@ class ViewerRuntime:
                 sleep_time = target_dt - elapsed
                 if sleep_time > 0:
                     time.sleep(sleep_time)
+
+                # Online running mean of frame wall time (includes sleep)
+                frame_elapsed_ms = (time.perf_counter() - frame_start) * 1000.0
+                self._mean_frame_ms = (
+                    self._mean_frame_ms * self._mean_samples + frame_elapsed_ms
+                ) / (self._mean_samples + 1)
+                self._mean_samples += 1
+
+                # Debug output
+                if self._frame_count % 60 == 0:
+                    mode = "Particles" if self._simple_mode else "Surface"
+                    print(
+                        f"Frame {self._frame_count}: mode={mode} | running avg {self._mean_frame_ms:.2f} ms/frame"
+                    )
 
                 # Check if window closed
                 if not self.plotter.window_size:

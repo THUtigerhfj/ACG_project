@@ -2,7 +2,7 @@
 customized:
   container_half_extents: &container_half_extents [0.5, 0.4, 0.4]
   sphere_radius_light: &sphere_radius_light 0.15
-  sphere_radius_heavy: &sphere_radius_heavy 0.1
+  sphere_radius_heavy: &sphere_radius_heavy 0.15
   sphere_density_light: &sphere_density_light 100.0
   sphere_density_heavy: &sphere_density_heavy 2000.0
   sphere_color_light: &sphere_color_light [0.9, 0.35, 0.2] # RGB channels between 0 and 1
@@ -29,7 +29,7 @@ container:
   translation: [0.0, 0.0, 0.0]
   wall_thickness: 0.05
 viewer:
-  fps: 60
+  fps: 30
   particle_radius: 0.01
   background_color: [0.02, 0.02, 0.03]
 rigid:

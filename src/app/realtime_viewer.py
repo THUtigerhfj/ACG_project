@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import warp as wp
 import numpy as np
@@ -21,6 +21,11 @@ from src.sim.solver import PBFSimulator, build_simulation_state
 from src.utils.config import ProjectConfig, load_config
 
 
+MOVE_STEP = 0.06  # Target displacement per key press (world units)
+MOVE_DURATION = 0.1  # Simulated seconds to apply that displacement
+MOVE_SPEED = MOVE_STEP / MOVE_DURATION
+
+
 @dataclass
 class ViewerRuntime:
     simulator: PBFSimulator
@@ -32,9 +37,16 @@ class ViewerRuntime:
     plotter: Optional["pv.Plotter"] = field(default=None, init=False)
     particle_cloud: Optional["pv.PolyData"] = field(default=None, init=False)
     container_mesh: Optional["pv.PolyData"] = field(default=None, init=False)
+    sphere_meshes: list["pv.PolyData"] = field(default_factory=list, init=False)
+    sphere_actors: list[Any] = field(default_factory=list, init=False)
 
     # State
     _frame_count: int = field(default=0, init=False)
+    _sim_time: float = field(default=0.0, init=False)
+    _container_velocity: np.ndarray = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32), init=False, repr=False
+    )
+    _velocity_until: float = field(default=0.0, init=False, repr=False)
 
     def _build_initial_particle_cloud(self) -> "pv.PolyData":
         """Create a PyVista point cloud from current particle positions."""
@@ -61,6 +73,65 @@ class ViewerRuntime:
         bounds = (cx - hx, cx + hx, cy - hy, cy + hy, cz - hz, cz + hz)
         new_box = pv.Box(bounds=bounds)
         self.container_mesh.copy_from(new_box)
+
+    def _build_sphere_wireframes(self) -> None:
+        """Create simple wireframe spheres to visualize rigid SDF radii."""
+        if pv is None:
+            return
+        spheres = getattr(self.simulator.state, "spheres", None)
+        if spheres is None:
+            return
+
+        centers = spheres.centers.numpy()
+        radii = spheres.radii.numpy()
+        self.sphere_meshes = []
+        self.sphere_actors = []
+        for i in range(centers.shape[0]):
+            mesh = pv.Sphere(center=centers[i], radius=float(radii[i]), theta_resolution=24, phi_resolution=24)
+            actor = self.plotter.add_mesh(mesh, style="wireframe", color="white", opacity=0.5)
+            self.sphere_meshes.append(mesh)
+            self.sphere_actors.append(actor)
+
+    def _update_sphere_wireframes(self) -> None:
+        if not self.sphere_meshes:
+            return
+        spheres = getattr(self.simulator.state, "spheres", None)
+        if spheres is None:
+            return
+        centers = spheres.centers.numpy()
+        radii = spheres.radii.numpy()
+        for i, mesh in enumerate(self.sphere_meshes):
+            updated = pv.Sphere(center=centers[i], radius=float(radii[i]), theta_resolution=24, phi_resolution=24)
+            try:
+                mesh.copy_from(updated)
+            except Exception:
+                if self.plotter is not None and i < len(self.sphere_actors):
+                    self.plotter.remove_actor(self.sphere_actors[i])
+                    actor = self.plotter.add_mesh(updated, style="wireframe", color="white", opacity=0.5)
+                    self.sphere_actors[i] = actor
+                    self.sphere_meshes[i] = updated
+
+    def _schedule_container_move(self, direction: tuple[float, float, float]) -> None:
+        """Convert a key press into a short-lived velocity impulse."""
+        if not any(direction):
+            return
+        self._container_velocity[:] = np.asarray(direction, dtype=np.float32) * MOVE_SPEED
+        # Use simulation time to expire the motion
+        self._velocity_until = self._sim_time + MOVE_DURATION
+
+    def _apply_container_motion(self, dt: float) -> None:
+        if dt <= 0.0:
+            return
+        if not np.any(self._container_velocity):
+            return
+        if self._sim_time >= self._velocity_until:
+            self._container_velocity[:] = 0.0
+            return
+
+        container = self.simulator.state.container
+        tx, ty, tz = container.translation
+        vx, vy, vz = self._container_velocity
+        container.set_translation((tx + float(vx * dt), ty + float(vy * dt), tz + float(vz * dt)))
 
     def run(self) -> None:
         """Launch the PyVista-based interactive viewer.
@@ -100,8 +171,8 @@ class ViewerRuntime:
             line_width=2,
         )
 
-        # Set up camera
-        self.plotter.camera_position = "iso"
+        # Set up camera to match smoothed_viewer (top-down with Z up)
+        self.plotter.camera_position = [(0, 4, 0), (0, 0, 0), (0, 0, 1)]
         self.plotter.camera.zoom(1.2)
 
         # Add instructions text
@@ -113,26 +184,22 @@ class ViewerRuntime:
             color="white",
         )
 
-        # Container movement - each key press moves by this amount
-        move_step = 0.05
-
-        def move_container(dx, dy, dz):
-            container = self.simulator.state.container
-            tx, ty, tz = container.translation
-            container.set_translation((tx + dx, ty + dy, tz + dz))
-            print(f"Container: ({tx+dx:.2f}, {ty+dy:.2f}, {tz+dz:.2f})")
+        # Build spheres wireframe visualization (keeps raw particles untouched)
+        self._build_sphere_wireframes()
 
         def reset_container():
             self.simulator.state.container.set_translation((0.0, 0.0, 0.0))
+            self._container_velocity[:] = 0.0
+            self._velocity_until = 0.0
             print("Container reset to origin")
 
         # Register key events
-        self.plotter.add_key_event("a", lambda: move_container(-move_step, 0, 0))
-        self.plotter.add_key_event("d", lambda: move_container(move_step, 0, 0))
-        self.plotter.add_key_event("s", lambda: move_container(0, -move_step, 0))
-        self.plotter.add_key_event("w", lambda: move_container(0, move_step, 0))
-        self.plotter.add_key_event("q", lambda: move_container(0, 0, -move_step))
-        self.plotter.add_key_event("e", lambda: move_container(0, 0, move_step))
+        self.plotter.add_key_event("a", lambda: self._schedule_container_move((-1.0, 0.0, 0.0)))
+        self.plotter.add_key_event("d", lambda: self._schedule_container_move((1.0, 0.0, 0.0)))
+        self.plotter.add_key_event("s", lambda: self._schedule_container_move((0.0, -1.0, 0.0)))
+        self.plotter.add_key_event("w", lambda: self._schedule_container_move((0.0, 1.0, 0.0)))
+        self.plotter.add_key_event("q", lambda: self._schedule_container_move((0.0, 0.0, -1.0)))
+        self.plotter.add_key_event("e", lambda: self._schedule_container_move((0.0, 0.0, 1.0)))
         self.plotter.add_key_event("r", reset_container)
 
         # Show window in interactive mode (non-blocking)
@@ -142,14 +209,20 @@ class ViewerRuntime:
         print("Controls: A/D (X), W/S (Y), Q/E (Z), R (reset)")
         
         target_dt = 1.0 / 60.0  # Target 60 FPS for rendering
+        sim_step_dt = float(self.simulator.dt * self.simulator.substeps)
+        self._sim_time = 0.0
         
         try:
             while True:
                 frame_start = time.perf_counter()
                 
+                # Smooth container motion using simulation timestep
+                self._apply_container_motion(sim_step_dt)
+
                 # Run simulation step
                 self.simulator.step()
                 self._frame_count += 1
+                self._sim_time += sim_step_dt
 
                 # Update particle positions
                 new_positions = self.simulator.state.particles.positions.numpy()
@@ -157,6 +230,9 @@ class ViewerRuntime:
 
                 # Update container mesh
                 self._update_container_mesh()
+
+                # Update sphere wireframes
+                self._update_sphere_wireframes()
 
                 # Render
                 self.plotter.update()
