@@ -1,4 +1,4 @@
-# ACG Real-Time SPH Project
+# ACG Real-Time PBF Project
 
 GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) implemented in Python with NVIDIA Warp. Move a kinematic container with keyboard controls and watch the water respond with incompressible fluid dynamics and XSPH viscosity damping.
 
@@ -7,7 +7,7 @@ GPU-accelerated, real-time fluid simulation using Position-Based Fluids (PBF) im
 - **Real-time PBF simulation** with GPU acceleration via NVIDIA Warp
 - **Interactive container control** using keyboard inputs
 - **XSPH viscosity** for smooth, realistic fluid behavior
-- **SDF-based collision** handling for container boundaries
+- **PBD-style collision** handling for container boundaries
 - **Two-way coupled rigid spheres**: one lighter and one heavier than water, interacting with the fluid via PBD-style contact impulses
 - **PyVista visualization** with ~60 FPS rendering
 
@@ -64,6 +64,5 @@ ACG_project/
 │   ├── kernels/      # Warp GPU kernels
 │   ├── sim/          # Simulation components
 │   └── utils/        # Configuration utilities
-├── tests/            # Unit tests
 └── requirements.txt  # Dependencies
 ```
